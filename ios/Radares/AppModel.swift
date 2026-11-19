@@ -52,6 +52,11 @@ final class AppModel: ObservableObject {
     private var dataOrigin = ""
     private var dataDate: Date?
     private static let settingsKey = "radares-ajustes"
+    // Solo para las capturas automáticas (argumentos de arranque -uidemo / -uitab / -uisimx).
+    private var pendingDemo: DemoKind?
+    private var pendingTab: AppTab?
+    private var simxOverride: Double = 0
+    private var lastRoute: DemoRoute?
 
     init() {
         var s = Settings()
@@ -66,7 +71,38 @@ final class AppModel: ObservableObject {
         })
         location.onLocation = { [weak self] loc in self?.handle(loc) }
         location.onError = { [weak self] msg in self?.gpsFailed(msg) }
+        readLaunchArguments()
         loadData(force: false)
+    }
+
+    private func readLaunchArguments() {
+        let ud = UserDefaults.standard
+        switch ud.string(forKey: "uidemo") {
+        case "fixed": pendingDemo = .fixed
+        case "tramo": pendingDemo = .tramo
+        case "zone": pendingDemo = .zone
+        default: break
+        }
+        switch ud.string(forKey: "uitab") {
+        case "map": pendingTab = .map
+        case "list": pendingTab = .list
+        case "settings": pendingTab = .settings
+        case "drive": pendingTab = .drive
+        default: break
+        }
+        simxOverride = ud.double(forKey: "uisimx")
+    }
+
+    private func runPendingLaunchActions() {
+        if let d = pendingDemo {
+            pendingDemo = nil
+            simulate(d)
+        }
+        if let t = pendingTab {
+            pendingTab = nil
+            tab = t
+            if t == .map, let r = lastRoute { mapFocus = r.path[max(0, r.path.count - 2)] }
+        }
     }
 
     private func saveSettings() {
@@ -98,6 +134,7 @@ final class AppModel: ObservableObject {
                     self.dataError = loaded.error ?? ""
                     self.loading = false
                     self.infoText = self.describeData()
+                    self.runPendingLaunchActions()
                 }
             }
         }
@@ -217,13 +254,14 @@ final class AppModel: ObservableObject {
         gpsState = .sim
         gpsText = "Simulación"
         setNote(r.message)
+        lastRoute = r
         tab = .drive
         speaker.prepare()
         sim = SimRunner(path: r.path, v: r.kmh / 3.6)
         simKmh = r.kmh
         simT = Date().timeIntervalSince1970
         simStep()
-        simTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / max(1, settings.simx), repeats: true) { [weak self] _ in
+        simTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / max(1, simxOverride > 0 ? simxOverride : settings.simx), repeats: true) { [weak self] _ in
             self?.simStep()
         }
         updateIdleTimer()

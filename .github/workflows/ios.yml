@@ -2,17 +2,21 @@ name: App de iPhone
 
 on:
   push:
+    branches: [main]
     paths:
       - "ios/**"
       - ".github/workflows/ios.yml"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel, macos-26]
+        os: [macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -41,3 +45,53 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee "$RUNNER_TEMP/build.log" \
             | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
           grep -q "BUILD SUCCEEDED" "$RUNNER_TEMP/build.log"
+
+  shots:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilar para el simulador
+        run: |
+          cd ios
+          set -o pipefail
+          xcodebuild -project Radares.xcodeproj -scheme Radares -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -5
+
+      - name: Capturas en el simulador
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/Radares.app"
+          BID=io.github.nicolasmarino1601.radares
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          c = [(rt, x) for rt, xs in d.items() if "iOS" in rt for x in xs if x["name"].startswith("iPhone")]
+          c.sort(key=lambda t: (t[0], "Pro" in t[1]["name"]))
+          print(c[-1][1]["udid"])')
+          echo "Simulador: $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 || true
+          xcrun simctl install "$UDID" "$APP"
+          mkdir -p "$RUNNER_TEMP/shots"
+          shot() { xcrun simctl io "$UDID" screenshot "$RUNNER_TEMP/shots/$1.png" >/dev/null 2>&1; echo "captura $1"; }
+          run() { xcrun simctl launch --terminate-running-process "$UDID" "$BID" "$@"; }
+          run -uitab settings; sleep 25; shot 0-ajustes
+          run -uidemo fixed -uisimx 3; for s in 6 12 18 24; do sleep 6; shot "1-fijo-$s"; done
+          run -uidemo tramo -uisimx 3; for s in 15 30 45; do sleep 15; shot "2-tramo-$s"; done
+          run -uidemo zone -uisimx 3; sleep 12; shot 3-zona
+          run -uidemo fixed -uisimx 1 -uitab map; sleep 15; shot 4-mapa
+          run -uidemo zone -uisimx 1 -uitab list; sleep 12; shot 5-lista
+          ls -la "$RUNNER_TEMP/shots"
+
+      - name: Publicar capturas en la rama ci-shots
+        run: |
+          cd "$RUNNER_TEMP/shots"
+          git init -q -b ci-shots
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add *.png
+          git commit -q -m "Capturas ${GITHUB_SHA::7}"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" ci-shots
