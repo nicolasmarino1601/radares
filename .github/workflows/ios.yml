@@ -1,0 +1,39 @@
+name: App de iPhone
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versión de Xcode
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Prueba del motor con los datos reales
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/feed.geojson" https://geiserx.github.io/radares-anunciados-ha/feed.geojson
+          curl -sSfL -o "$RUNNER_TEMP/roads.json" https://geiserx.github.io/radares-anunciados-ha/roads.json
+          ls -la "$RUNNER_TEMP"
+          cd ios
+          swiftc -O -o "$RUNNER_TEMP/enginetest" Radares/Geo.swift Radares/RadarDB.swift Radares/Engine.swift Tests/main.swift
+          "$RUNNER_TEMP/enginetest" "$RUNNER_TEMP/feed.geojson" "$RUNNER_TEMP/roads.json" Radares/supp.json
+
+      - name: Compilar la app para iPhone (sin firmar)
+        run: |
+          cd ios
+          set -o pipefail
+          xcodebuild -project Radares.xcodeproj -scheme Radares -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee "$RUNNER_TEMP/build.log" \
+            | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" "$RUNNER_TEMP/build.log"
