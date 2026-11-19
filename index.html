@@ -1203,7 +1203,7 @@ function runSim(path,kmh,msg){
   step(); sim.timer=setInterval(step,1000/(S.simx||1));
 }
 function demoFixed(){
-  const c=P.filter(p=>p.kind==='F'&&p.aps&&p.aps.length&&p.max&&p.max>=80);
+  const c=P.filter(p=>p.kind==='F'&&!p.nearT&&p.err===0&&p.aps&&p.aps.length&&p.max&&p.max>=80);
   const p=c.find(p=>/A-7\b|A-70|A-31/.test(p.name))||c[0];
   if(!p){ const q=P.find(p=>p.kind==='F'&&p.bear!=null&&p.max); if(!q){note('No hay radares cargados para simular.',true);return;} const s=dest(q.lat,q.lon,(q.bear+180)%360,1800),e=dest(q.lat,q.lon,q.bear,500); runSim([s,[q.lat,q.lon],e],q.max+9,`Simulación: te acercás a ${q.name} a ${q.max+9} km/h.`); return; }
   const ap=p.aps[0].pts.slice(); const last=ap[ap.length-1], prev=ap[ap.length-2]; const out=dest(last[0],last[1],bearing(prev[0],prev[1],last[0],last[1]),500);
