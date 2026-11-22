@@ -22,6 +22,7 @@ struct DriveView: View {
                 Speedometer(kmh: m.output.kmh, over: m.output.over, active: m.running)
 
                 if let a = m.output.alert { AlertCard(a: a) }
+                if let p = m.output.passed { PassedCard(text: p) }
                 if let t = m.output.tramo { TramoCard(t: t) }
                 if let z = m.output.zone { ZoneCard(z: z) }
 
@@ -176,6 +177,26 @@ struct TramoCard: View {
         .padding(14)
         .background(Theme.card)
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(t.over ? Theme.red : Theme.orange, lineWidth: 2))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+struct PassedCard: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title)
+                .foregroundColor(Theme.green)
+            Text(text)
+                .font(.headline)
+                .foregroundColor(Theme.text)
+            Spacer()
+        }
+        .padding(14)
+        .background(Theme.green.opacity(0.14))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.green, lineWidth: 1.5))
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 }

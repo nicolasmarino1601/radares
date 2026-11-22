@@ -12,6 +12,7 @@ struct Settings: Codable, Equatable {
     var dist: Double = 0      // 0 = automática según la velocidad
     var simx: Double = 3
     var keepAwake = true
+    var passed = true         // avisar al dejar atrás un radar o una zona de móviles
 
     init() {}
 
@@ -26,6 +27,7 @@ struct Settings: Codable, Equatable {
         dist = try c.decodeIfPresent(Double.self, forKey: .dist) ?? 0
         simx = try c.decodeIfPresent(Double.self, forKey: .simx) ?? 3
         keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? true
+        passed = try c.decodeIfPresent(Bool.self, forKey: .passed) ?? true
     }
 
     /// Si un radar puntual entra en los avisos con estos ajustes.
@@ -72,6 +74,8 @@ struct EngineOutput: Equatable {
     var zone: ZoneInfo?
     var next: String = ""
     var over = false
+    /// "Radar superado", etc., unos segundos después de pasarlo.
+    var passed: String?
 }
 
 // MARK: - motor de avisos
@@ -87,6 +91,9 @@ final class Engine {
         var p: RadarPoint
         var lim: Double
         var stage: Int
+        var minD = Double.infinity  // lo más cerca que estuvimos (por la carretera)
+        var silent = false          // cabina de un tramo: el aviso es el del tramo
+        var passed = false
         init(t: Double, p: RadarPoint, lim: Double, stage: Int) {
             self.t = t
             self.p = p
@@ -117,6 +124,9 @@ final class Engine {
     private var lastAvgWarn: Double = -1e12
     private var tramoCard: TramoInfo?
     private var tramoCardUntil: Double = 0
+    private var passedText: String?
+    private var passedUntil: Double = 0
+    private var lastPassT: Double = -1e12
 
     init(db: RadarDB, settings: Settings, speak: @escaping (String, Int) -> Void) {
         self.db = db
@@ -136,6 +146,9 @@ final class Engine {
         lastAvgWarn = -1e12
         tramoCard = nil
         tramoCardUntil = 0
+        passedText = nil
+        passedUntil = 0
+        lastPassT = -1e12
     }
 
     func warnDist(_ v: Double) -> Double {
@@ -203,8 +216,23 @@ final class Engine {
         let candS = db.queryStretches(lat, lon, 1)
         tramoLogic(lat, lon, v, t, wd, candS, &out)
 
+        // ¿dejamos atrás algún radar ya avisado?
+        var passedNow: RadarPoint? = nil
+        if let h = h {
+            for (_, a) in alerted where !a.passed {
+                let cur = pointDistance(a.p, lat, lon, h, wd)
+                if let c = cur { a.minD = min(a.minD, c) }
+                guard a.minD <= 80 else { continue } // nunca estuvimos cerca: no lo pasamos
+                let straight = Geo.dist(lat, lon, a.p.lat, a.p.lon)
+                let behind = Geo.adiff(h, Geo.bearing(lat, lon, a.p.lat, a.p.lon)) > 100
+                if (cur == nil || cur! > a.minD + 40) && straight > 25 + a.p.err && behind {
+                    a.passed = true
+                    if !a.silent && passedNow == nil { passedNow = a.p }
+                }
+            }
+        }
         var best: (p: RadarPoint, d: Double, lim: Double)? = nil
-        for p in candP where settings.shows(p) {
+        for p in candP where settings.shows(p) && alerted[p.id]?.passed != true {
             guard let d = pointDistance(p, lat, lon, h, wd) else { continue }
             let lim = p.kind == .redLight ? 300 : wd
             if d <= max(lim, 1) * 1.6 && (best == nil || d < best!.d) { best = (p, d, lim) }
@@ -213,6 +241,7 @@ final class Engine {
             let d = Geo.dist(lat, lon, a.p.lat, a.p.lon)
             if d > a.lim + a.p.err + 800 || t - a.t > 300 { alerted[id] = nil }
         }
+        var spoke = false
         if let b = best {
             let p = b.p, d = b.d, lim = b.lim
             var a = alerted[p.id]
@@ -220,13 +249,17 @@ final class Engine {
                 // el mismo radar publicado dos veces: no repetir el aviso
                 for (_, other) in alerted where Geo.dist(other.p.lat, other.p.lon, p.lat, p.lon) < 120 {
                     let c = Alerted(t: other.t, p: p, lim: other.lim, stage: other.stage)
+                    c.silent = other.silent
+                    c.passed = other.passed
                     alerted[p.id] = c
                     a = c
                     break
                 }
             }
             if a == nil && d <= lim && p.nearT.contains(where: { tAlerted[$0] != nil || tramo?.tr.id == $0 }) {
-                alerted[p.id] = Alerted(t: t, p: p, lim: lim, stage: 1) // cabina de un tramo ya anunciado
+                let c = Alerted(t: t, p: p, lim: lim, stage: 1) // cabina de un tramo ya anunciado
+                c.silent = true
+                alerted[p.id] = c
             } else if a == nil && d <= lim {
                 alerted[p.id] = Alerted(t: t, p: p, lim: lim, stage: 1)
                 var txt: String
@@ -244,9 +277,11 @@ final class Engine {
                 }
                 if let m = p.max { txt += " Límite \(m)." }
                 speak(txt, 1)
+                spoke = true
             } else if let al = a, al.stage == 1, let m = p.max, d <= 220, kmh > Double(m) + 2 {
                 al.stage = 2
                 speak("Atención. Vas a \(Int(kmh.rounded())). Límite \(m).", 2)
+                spoke = true
             }
             let over = p.max.map { kmh > Double($0) + 2 } ?? false
             let label = p.name.replacingOccurrences(of: "^Radar (fijo|de tramo) ", with: "", options: .regularExpression)
@@ -254,7 +289,17 @@ final class Engine {
                                   label: label, distance: d, max: p.max, over: over)
         }
 
+        if let p = passedNow {
+            let txt = p.kind == .redLight ? "Cámara superada" : (p.err > 0 ? "Zona del radar superada" : "Radar superado")
+            showPassed(txt, t)
+            if settings.passed && !spoke && t - lastPassT > 8 {
+                lastPassT = t
+                speak(txt + ".", 0)
+            }
+        }
+
         zoneLogic(lat, lon, t, candS, &out)
+        if out.alert == nil, settings.passed, let txt = passedText, t < passedUntil { out.passed = txt }
 
         // próximo radar en la dirección de marcha
         if tramo == nil {
@@ -282,6 +327,11 @@ final class Engine {
         out.over = overPoint || (tramo?.over ?? false)
     }
 
+    private func showPassed(_ text: String, _ t: Double) {
+        passedText = text
+        passedUntil = t + 6
+    }
+
     // MARK: tramos con radares móviles de la DGT
 
     private func zoneLogic(_ lat: Double, _ lon: Double, _ t: Double, _ cand: [Stretch], _ out: inout EngineOutput) {
@@ -306,9 +356,15 @@ final class Engine {
                     speak("Tramo con radares móviles de la Guardia Civil" + (iz.z.road.isEmpty ? "" : " en la \(iz.z.road)") + ".", 1)
                 }
             }
-        } else if zone != nil {
+        } else if let z = zone {
             zOut += 1
-            if zOut >= 4 { zone = nil }
+            if zOut >= 4 {
+                zone = nil
+                if settings.passed {
+                    showPassed("Fin del tramo con radares móviles" + (z.road.isEmpty ? "" : " (\(z.road))"), t)
+                    speak("Fin del tramo con radares móviles.", 0)
+                }
+            }
         }
         if let z = zone {
             var label = z.road

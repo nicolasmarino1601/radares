@@ -63,6 +63,11 @@ func drive(_ route: DemoRoute?, _ name: String, settings: Settings = Settings(),
 let f = drive(Demo.fixed(db), "Radar fijo")
 check(f.contains { $0.hasPrefix("Radar fijo a") }, "avisa el radar fijo")
 check(f.contains { $0.hasPrefix("Atención. Vas a") }, "avisa que vas pasado")
+check(f.last == "Radar superado.", "avisa al dejar atrás el radar")
+var quiet = Settings()
+quiet.passed = false
+let fq = drive(Demo.fixed(db), "Radar fijo sin aviso de superado", settings: quiet)
+check(!fq.contains("Radar superado."), "respeta el ajuste de radar superado")
 
 let tr = drive(Demo.tramo(db), "Tramo")
 check(tr.contains { $0.hasPrefix("Tramo de velocidad media a") }, "preaviso del tramo")
@@ -71,6 +76,13 @@ check(tr.contains { $0.hasPrefix("Fin del tramo") }, "fin del tramo")
 
 let z = drive(Demo.zone(db), "Zona de radares móviles")
 check(z.contains { $0.hasPrefix("Tramo con radares móviles") }, "aviso de zona de móviles")
+
+if let zr = Demo.zone(db) {
+    let p = zr.path, n = p.count
+    let out = Geo.dest(p[n - 1], Geo.bearing(p[n - 2], p[n - 1]), 900)
+    let zx = drive(DemoRoute(path: p + [out], kmh: zr.kmh, message: zr.message + " Y sale."), "Zona y salida")
+    check(zx.contains("Fin del tramo con radares móviles."), "avisa al salir de la zona de móviles")
+}
 
 var noZones = Settings()
 noZones.zonas = false
@@ -82,6 +94,7 @@ check(!z2.contains { $0.hasPrefix("Tramo con radares móviles") }, "respeta el a
 if let r = Demo.fixed(db) {
     let back = drive(r, "Radar fijo", reverse: true)
     print("  (avisos en sentido contrario: \(back.count))")
+    check(!back.contains("Radar superado."), "en sentido contrario no dice «Radar superado»")
 }
 
 print(failures == 0 ? "\nTodo bien." : "\n\(failures) fallas.")

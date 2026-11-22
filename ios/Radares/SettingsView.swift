@@ -13,6 +13,7 @@ struct SettingsView: View {
                     Toggle("Posibles radares sin confirmar", isOn: $m.settings.posibles)
                     Toggle("Puntos de radar remolque", isOn: $m.settings.remolque)
                     Toggle("Cámaras de semáforo", isOn: $m.settings.sem)
+                    Toggle("Avisar al dejar atrás el radar", isOn: $m.settings.passed)
                     Picker("Distancia del primer aviso", selection: $m.settings.dist) {
                         Text("Automática").tag(0.0)
                         Text("400 m").tag(400.0)
@@ -23,7 +24,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Avisos")
                 } footer: {
-                    Text("«Automática» avisa antes cuanto más rápido vas. Con la pantalla apagada o usando otra app, los avisos siguen sonando.")
+                    Text("«Automática» avisa antes cuanto más rápido vas. «Avisar al dejar atrás el radar» dice «Radar superado» al pasarlo y «Fin del tramo con radares móviles» al salir de uno. Con la pantalla apagada o usando otra app, los avisos siguen sonando.")
                 }
 
                 Section {

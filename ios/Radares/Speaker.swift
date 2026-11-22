@@ -38,12 +38,12 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
         prepare()
         try? AVAudioSession.sharedInstance().setActive(true)
         if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
-        let n = max(1, min(3, beeps))
-        playBeeps(n)
+        let n = max(0, min(3, beeps))
+        if n > 0 { playBeeps(n) }
         let u = AVSpeechUtterance(string: text)
         u.voice = voice
         u.rate = min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * 1.05)
-        u.preUtteranceDelay = 0.22 * Double(n) + 0.05
+        u.preUtteranceDelay = n > 0 ? 0.22 * Double(n) + 0.05 : 0.05
         synth.speak(u)
     }
 
